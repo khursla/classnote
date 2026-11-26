@@ -79,23 +79,38 @@ export default function StudentsPage() {
     const [enrolledClasses, setEnrolledClasses] = useState<EnrolledClass[]>([]);
     const [examResults, setExamResults] = useState<StudentExamResult[]>([]);
 
-    const fetchStudents = async () => {
-        let query = supabase
-            .from('students')
-            .select('*')
-            .order('name', { ascending: true });
+    const [showAllTeachers, setShowAllTeachers] = useState(false);
+  const [classList, setClassList] = useState<
+    { id: string; name: string; subject?: string; grade?: string; teacher_id?: string }[]
+  >([]);
+  const [classLinks, setClassLinks] = useState<{ class_id: string; student_id: string }[]>([]);
+  const [selectedClassFilter, setSelectedClassFilter] = useState<string>('all');
+  const [uploadClassId, setUploadClassId] = useState<string>('');
 
-        if (profile?.role === 'teacher') {
-            query = query.eq('teacher_id', profile.id);
-        }
+  const fetchStudents = async () => {
+    const [studentRes, classRes, linkRes] = await Promise.all([
+      supabase.from('students').select('*').order('name', { ascending: true }),
+      supabase
+        .from('classes')
+        .select('id, name, subject, grade, teacher_id')
+        .order('created_at', { ascending: false }),
+      supabase.from('class_students').select('class_id, student_id'),
+    ]);
 
-        const { data, error } = await query;
-        if (!error && data) setStudents(data as Student[]);
-    };
+    if (!studentRes.error && studentRes.data) {
+      setStudents(studentRes.data as Student[]);
+    }
+    if (!classRes.error && classRes.data) {
+      setClassList(classRes.data);
+    }
+    if (!linkRes.error && linkRes.data) {
+      setClassLinks(linkRes.data);
+    }
+  };
 
-    useEffect(() => {
-        fetchStudents();
-    }, [profile]);
+  useEffect(() => {
+    if (profile) fetchStudents();
+  }, [profile]);
 
     // 학생 클릭 시 수강 클래스 + 시험 성적 불러오기
     const handleSelectStudent = async (student: Student) => {
@@ -209,65 +224,157 @@ export default function StudentsPage() {
 
     // 엑셀 업로드
     const handleExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-        const data = await file.arrayBuffer();
-        const workbook = XLSX.read(data);
-        const sheet = workbook.Sheets[workbook.SheetNames[0]];
-        const rows: any[] = XLSX.utils.sheet_to_json(sheet);
+    const data = await file.arrayBuffer();
+    const workbook = XLSX.read(data);
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows: any[] = XLSX.utils.sheet_to_json(sheet);
 
-        const payload = rows
-            .map((r) => ({
-                name: String(r['이름'] || r['name'] || '').trim(),
-                school: String(r['학교'] || r['school'] || '').trim(),
-                grade: String(r['학년'] || r['grade'] || '고1').trim(),
-                parent_phone: String(r['학부모 전화번호'] || r['학부모연락처'] || r['parent_phone'] || '').trim(),
-                student_phone: String(r['학생 전화번호'] || r['학생연락처'] || r['student_phone'] || '').trim(),
-                is_active: true,
-                teacher_id: profile?.id,
-            }))
-            .filter((r) => r.name);
+    const payload = rows
+      .map((r) => ({
+        name: String(r['이름'] || r['name'] || '').trim(),
+        school: String(r['학교'] || r['school'] || '').trim(),
+        grade: String(r['학년'] || r['grade'] || '고1').trim(),
+        parent_phone: String(r['학부모 전화번호'] || r['학부모연락처'] || r['parent_phone'] || '').trim(),
+        student_phone: String(r['학생 전화번호'] || r['학생연락처'] || r['student_phone'] || '').trim(),
+        is_active: true,
+        teacher_id: profile?.id,
+      }))
+      .filter((r) => r.name);
 
-        if (payload.length === 0) {
-            alert('엑셀에서 유효한 학생 데이터를 찾지 못했습니다. (열 이름: 이름, 학교, 학년 등)');
-            return;
-        }
+    if (payload.length === 0) {
+      alert('엑셀에서 유효한 학생 데이터를 찾지 못했습니다. (열 이름: 이름, 학교, 학년 등)');
+      e.target.value = '';
+      return;
+    }
 
-        const { error } = await supabase.from('students').insert(payload);
-        if (error) alert('업로드 실패: ' + error.message);
-        else {
-            alert(`${payload.length}명의 학생이 등록되었습니다.`);
-            fetchStudents();
-        }
-        e.target.value = '';
-    };
+    // 기존 동일 학생(이름 + 연락처 일치) 확인하여 중복 등록 방지
+    const toInsert: typeof payload = [];
+    const matchedStudentIds: string[] = [];
 
-    // 엑셀 내보내기
-    const handleExcelDownload = () => {
-        const exportData = students.map((s) => ({
-            이름: s.name,
-            학교: s.school || '',
-            학년: s.grade || '',
-            '학부모 전화번호': s.parent_phone || '',
-            '학생 전화번호': s.student_phone || '',
-        }));
-        const ws = XLSX.utils.json_to_sheet(exportData);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, '학생명단');
-        XLSX.writeFile(wb, 'ClassNote_학생명단.xlsx');
-    };
-
-    const filteredStudents = students.filter((s) => {
-        const q = search.trim().toLowerCase();
-        if (!q) return true;
-        return (
-            s.name?.toLowerCase().includes(q) ||
-            s.school?.toLowerCase().includes(q) ||
-            s.parent_phone?.includes(q) ||
-            s.student_phone?.includes(q)
-        );
+    payload.forEach((row) => {
+      const existing = students.find(
+        (s) =>
+          s.name === row.name &&
+          ((row.parent_phone && s.parent_phone === row.parent_phone) ||
+            (row.student_phone && s.student_phone === row.student_phone) ||
+            (!row.parent_phone && !row.student_phone))
+      );
+      if (existing) {
+        matchedStudentIds.push(existing.id);
+      } else {
+        toInsert.push(row);
+      }
     });
+
+    let insertedIds: string[] = [];
+    if (toInsert.length > 0) {
+      const { data: insertedData, error } = await supabase
+        .from('students')
+        .insert(toInsert)
+        .select('id');
+
+      if (error) {
+        alert('업로드 실패: ' + error.message);
+        e.target.value = '';
+        return;
+      }
+      insertedIds = (insertedData || []).map((item: { id: string }) => item.id);
+    }
+
+    const targetStudentIds = Array.from(new Set([...matchedStudentIds, ...insertedIds]));
+
+    // 반이 선택된 경우 해당 반(class_students)에 자동 배정
+    if (uploadClassId && targetStudentIds.length > 0) {
+      const alreadyEnrolled = new Set(
+        classLinks.filter((l) => l.class_id === uploadClassId).map((l) => l.student_id)
+      );
+      const newEnrollments = targetStudentIds
+        .filter((sid) => !alreadyEnrolled.has(sid))
+        .map((sid) => ({
+          class_id: uploadClassId,
+          student_id: sid,
+        }));
+
+      if (newEnrollments.length > 0) {
+        const { error: enrollError } = await supabase
+          .from('class_students')
+          .insert(newEnrollments);
+
+        if (enrollError) {
+          alert(`학생 등록은 되었으나 반 배정 중 오류가 발생했습니다: ${enrollError.message}`);
+          fetchStudents();
+          e.target.value = '';
+          return;
+        }
+      }
+
+      const targetClass = classList.find((c) => c.id === uploadClassId);
+      alert(
+        `신규 ${insertedIds.length}명 등록 / 총 ${targetStudentIds.length}명이 [${targetClass?.name || '선택한 반'}]에 배정되었습니다.`
+      );
+    } else {
+      alert(`${insertedIds.length}명의 학생이 등록되었습니다.`);
+    }
+
+    fetchStudents();
+    e.target.value = '';
+  };
+
+  // 현재 표시 범위의 반 목록 (기본: 내 반만 / 전체 보기 시: 전체 반)
+  const visibleClasses = showAllTeachers
+    ? classList
+    : classList.filter((c) => c.teacher_id === profile?.id);
+
+  const visibleClassIds = new Set(visibleClasses.map((c) => c.id));
+  const visibleClassStudentIds = new Set(
+    classLinks.filter((l) => visibleClassIds.has(l.class_id)).map((l) => l.student_id)
+  );
+  const allEnrolledStudentIds = new Set(classLinks.map((l) => l.student_id));
+
+  const filteredStudents = students.filter((s) => {
+    // 1. 내 반 학생만 보기 필터 (반 미배정 신규 등록 학생 포함)
+    if (!showAllTeachers) {
+      const isInMyClass = visibleClassStudentIds.has(s.id);
+      const isMyUnassigned = (s as any).teacher_id === profile?.id && !allEnrolledStudentIds.has(s.id);
+      if (!isInMyClass && !isMyUnassigned) return false;
+    }
+
+    // 2. 특정 반 선택 필터
+    if (selectedClassFilter !== 'all') {
+      const inSelectedClass = classLinks.some(
+        (l) => l.class_id === selectedClassFilter && l.student_id === s.id
+      );
+      if (!inSelectedClass) return false;
+    }
+
+    // 3. 검색어 필터
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      s.name?.toLowerCase().includes(q) ||
+      s.school?.toLowerCase().includes(q) ||
+      s.parent_phone?.includes(q) ||
+      s.student_phone?.includes(q)
+    );
+  });
+
+  // 엑셀 내보내기 (현재 필터링된 학생 기준)
+  const handleExcelDownload = () => {
+    const exportData = filteredStudents.map((s) => ({
+      이름: s.name,
+      학교: s.school || '',
+      학년: s.grade || '',
+      '학부모 전화번호': s.parent_phone || '',
+      '학생 전화번호': s.student_phone || '',
+    }));
+    const ws = XLSX.utils.json_to_sheet(exportData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '학생명단');
+    XLSX.writeFile(wb, 'ClassNote_학생명단.xlsx');
+  };
 
     // 선택된 학생 성적 통계 계산
     const totalExams = examResults.length;
@@ -313,33 +420,87 @@ export default function StudentsPage() {
     };
     return (
         <div className="space-y-5">
-            {/* 상단 요약 + 엑셀 버튼 */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <p className="text-sm text-gray-400">
-                    총 {students.length}명의 수강생이 등록되어 있습니다. 학생을 클릭하면 상세 성적을 볼 수 있습니다.
-                </p>
-                <div className="flex items-center gap-2">
-                    <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept=".xlsx,.xls,.csv"
-                        onChange={handleExcelUpload}
-                        className="hidden"
-                    />
-                    <button
-                        onClick={() => fileInputRef.current?.click()}
-                        className="flex items-center gap-1.5 px-3.5 py-2 bg-[#161922] border border-gray-700 hover:border-gray-500 text-xs text-white rounded-lg transition"
-                    >
-                        <Upload size={14} /> 엑셀 업로드
-                    </button>
-                    <button
-                        onClick={handleExcelDownload}
-                        className="flex items-center gap-1.5 px-3.5 py-2 bg-[#161922] border border-gray-700 hover:border-gray-500 text-xs text-white rounded-lg transition"
-                    >
-                        <Download size={14} /> 엑셀 내보내기
-                    </button>
-                </div>
-            </div>
+            {/* 상단 요약 + 필터 + 반별 엑셀 업로드 */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm text-gray-400">
+              총 <span className="text-white font-semibold">{filteredStudents.length}</span>명의 수강생
+            </p>
+
+            {profile?.role === 'admin' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAllTeachers((prev) => !prev);
+                  setSelectedClassFilter('all');
+                }}
+                className={`px-2.5 py-1 rounded-lg text-xs border transition ${
+                  showAllTeachers
+                    ? 'bg-amber-500/15 border-amber-500/40 text-amber-300'
+                    : 'bg-blue-500/15 border-blue-500/40 text-blue-300'
+                }`}
+              >
+                {showAllTeachers ? '전체 학생 보는 중' : '내 반 학생만 보기'}
+              </button>
+            )}
+
+            {visibleClasses.length > 0 && (
+              <select
+                value={selectedClassFilter}
+                onChange={(e) => setSelectedClassFilter(e.target.value)}
+                className="bg-[#161922] border border-gray-700 rounded-lg px-2.5 py-1 text-xs text-gray-200"
+              >
+                <option value="all">{showAllTeachers ? '전체 반 보기' : '내 반 전체'}</option>
+                {visibleClasses.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {visibleClasses.length > 0 && (
+              <select
+                value={uploadClassId}
+                onChange={(e) => setUploadClassId(e.target.value)}
+                className="bg-[#161922] border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200"
+              >
+                <option value="">업로드할 반 선택 (미선택 시 명단만 등록)</option>
+                {visibleClasses.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              onChange={handleExcelUpload}
+              className="hidden"
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className={`flex items-center gap-1.5 px-3.5 py-2 border rounded-lg text-xs transition ${
+                uploadClassId
+                  ? 'bg-blue-600/20 border-blue-500/50 text-blue-300 hover:bg-blue-600/30'
+                  : 'bg-[#161922] border-gray-700 hover:border-gray-500 text-gray-200'
+              }`}
+            >
+              <Upload size={14} /> {uploadClassId ? '선택 반에 엑셀 업로드' : '엑셀 업로드'}
+            </button>
+            <button
+              onClick={handleExcelDownload}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-[#161922] border border-gray-700 hover:border-gray-500 rounded-lg text-xs text-gray-200 transition"
+            >
+              <Download size={14} /> 엑셀 내보내기
+            </button>
+          </div>
+        </div>
 
             {/* 학생 추가 폼 */}
             <form
