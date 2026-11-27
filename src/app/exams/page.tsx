@@ -106,13 +106,10 @@ export default function ExamsPage() {
       .eq('teacher_id', profile.id)
       .order('created_at', { ascending: false });
 
-   let stuQuery = supabase
+   const stuQuery = supabase
       .from('students')
-      .select('id, name, school')
+      .select('*')
       .order('name', { ascending: true });
-    if (profile?.role === 'teacher') {
-      stuQuery = stuQuery.eq('teacher_id', profile.id);
-    }
 
     const [clsRes, stuRes, exmRes, csRes] = await Promise.all([
       clsQuery,
@@ -120,14 +117,28 @@ export default function ExamsPage() {
       exmQuery,
       supabase.from('class_students').select('class_id, student_id'),
     ]);
-    if (clsRes.data) setClasses(clsRes.data);
-    if (csRes.data) setClassStudents(csRes.data);
+
+    const myClasses = clsRes.data || [];
+    const allLinks = csRes.data || [];
+    setClasses(myClasses);
+    setClassStudents(allLinks);
+
     if (stuRes.data) {
-      setStudents(stuRes.data);
-      if (stuRes.data.length > 0 && !selectedStudentId) {
-        setSelectedStudentId(stuRes.data[0].id);
+      const myClassIds = new Set(myClasses.map((c: any) => c.id));
+      const myEnrolledIds = new Set(
+        allLinks
+          .filter((l: any) => myClassIds.has(l.class_id))
+          .map((l: any) => l.student_id)
+      );
+      const myStudents = stuRes.data.filter(
+        (s: any) => s.teacher_id === profile.id || myEnrolledIds.has(s.id)
+      );
+      setStudents(myStudents);
+      if (myStudents.length > 0 && !selectedStudentId) {
+        setSelectedStudentId(myStudents[0].id);
       }
     }
+
     if (exmRes.data) {
       setExams(exmRes.data);
       if (exmRes.data.length > 0 && !selectedExamId) {
