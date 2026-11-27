@@ -110,7 +110,7 @@ export default function Home() {
       .select('id, name, school, grade, parent_phone, student_phone')
       .order('name', { ascending: true });
 
-    if (profile?.role === 'teacher') {
+    if (profile?.role === 'teacher' || (profile?.id && !showAllTeachers)) {
       allStuQuery = allStuQuery.eq('teacher_id', profile.id);
     }
 
