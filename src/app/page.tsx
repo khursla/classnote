@@ -125,11 +125,16 @@ export default function Home() {
         .select('*')
         .eq('class_id', classId)
         .order('session_no', { ascending: true }),
-      supabase
-        .from('exams')
-        .select('id, title, created_at')
-        .eq('class_id', classId)
-        .order('created_at', { ascending: false }),
+      profile?.id
+          ? supabase
+              .from('exams')
+              .select('id, title, created_at')
+              .eq('teacher_id', profile.id)
+              .order('created_at', { ascending: false })
+          : supabase
+              .from('exams')
+              .select('id, title, created_at')
+              .order('created_at', { ascending: false }),
     ]);
 
     if (allStuRes.data) setAllStudents(allStuRes.data as StudentItem[]);

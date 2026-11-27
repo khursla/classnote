@@ -92,13 +92,19 @@ export default function ExamsPage() {
 
   // 초기 데이터 불러오기
   const fetchBaseData = async () => {
-   let clsQuery = supabase.from('classes').select('id, name').order('created_at', { ascending: false });
-    let exmQuery = supabase.from('exams').select('*').order('created_at', { ascending: false });
+    if (!profile?.id) return;
 
-    if (profile?.role === 'teacher') {
-      clsQuery = clsQuery.eq('teacher_id', profile.id);
-      exmQuery = exmQuery.eq('teacher_id', profile.id);
-    }
+    const clsQuery = supabase
+      .from('classes')
+      .select('id, name')
+      .eq('teacher_id', profile.id)
+      .order('created_at', { ascending: false });
+
+    const exmQuery = supabase
+      .from('exams')
+      .select('*')
+      .eq('teacher_id', profile.id)
+      .order('created_at', { ascending: false });
 
    let stuQuery = supabase
       .from('students')
@@ -906,7 +912,7 @@ const questionTotalScore = totalScore;
 )}
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3">
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">시험지 제목 *</label>
                   <input
@@ -916,22 +922,7 @@ const questionTotalScore = totalScore;
                     placeholder="예: 26-2기말 주간T #3_분당"
                     className="w-full bg-[#0f1117] border border-gray-700 rounded-lg px-3 py-2 text-sm text-white"
                   />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1">연결 클래스</label>
-                  <select
-                    value={examClassId}
-                    onChange={(e) => setExamClassId(e.target.value)}
-                    className="w-full bg-[#0f1117] border border-gray-700 rounded-lg px-3 py-2 text-sm text-white"
-                  >
-                    <option value="">선택 안 함</option>
-                    {classes.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                </div>               
               </div>
 
               {/* 문항 수 설정 */}
