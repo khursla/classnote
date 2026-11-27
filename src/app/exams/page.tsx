@@ -66,6 +66,8 @@ export default function ExamsPage() {
   const [classStudents, setClassStudents] = useState<
     { class_id: string; student_id: string }[]
   >([]);
+  const [classSessions, setClassSessions] = useState<any[]>([]);
+  const [selectedClassId, setSelectedClassId] = useState<string>('');
   const [results, setResults] = useState<ExamResult[]>([]);
 
   const [selectedExamId, setSelectedExamId] = useState<string>('');
@@ -111,17 +113,19 @@ export default function ExamsPage() {
       .select('*')
       .order('name', { ascending: true });
 
-    const [clsRes, stuRes, exmRes, csRes] = await Promise.all([
+    const [clsRes, stuRes, exmRes, csRes, sessRes] = await Promise.all([
       clsQuery,
       stuQuery,
       exmQuery,
       supabase.from('class_students').select('class_id, student_id'),
+      supabase.from('class_sessions').select('id, class_id, exam_id, session_no'),
     ]);
 
     const myClasses = clsRes.data || [];
     const allLinks = csRes.data || [];
     setClasses(myClasses);
     setClassStudents(allLinks);
+    setClassSessions(sessRes.data || []);
 
     if (stuRes.data) {
       const myClassIds = new Set(myClasses.map((c: any) => c.id));
@@ -183,18 +187,41 @@ export default function ExamsPage() {
     () => exams.find((e) => e.id === selectedExamId) || null,
     [exams, selectedExamId]
   );
-// 선택된 시험지의 클래스 소속 학생만 필터링
+// 선택된 시험지가 연결된 클래스 목록 계산
+  const linkedClasses = useMemo(() => {
+    if (!selectedExam) return [];
+    const linkedIds = new Set<string>();
+    if (selectedExam.class_id) linkedIds.add(selectedExam.class_id);
+    classSessions
+      .filter((sess) => sess.exam_id === selectedExam.id && sess.class_id)
+      .forEach((sess) => linkedIds.add(sess.class_id));
+    return classes.filter((c) => linkedIds.has(c.id));
+  }, [selectedExam, classSessions, classes]);
+
+  // 시험지 변경 시 연결된 첫 번째 클래스 자동 선택
+  useEffect(() => {
+    if (linkedClasses.length > 0) {
+      const exists = linkedClasses.some((c) => c.id === selectedClassId);
+      if (!exists) {
+        setSelectedClassId(linkedClasses[0].id);
+      }
+    } else {
+      setSelectedClassId('');
+    }
+  }, [linkedClasses, selectedClassId]);
+
+  // 선택된 클래스 소속 학생만 필터링
   const filteredStudents = useMemo(() => {
-    if (!selectedExam?.class_id) return students;
+    if (!selectedClassId) return students;
     const allowedIds = new Set(
       classStudents
-        .filter((cs) => cs.class_id === selectedExam.class_id)
+        .filter((cs) => cs.class_id === selectedClassId)
         .map((cs) => cs.student_id)
     );
     return students.filter((st) => allowedIds.has(st.id));
-  }, [students, classStudents, selectedExam]);
+  }, [students, classStudents, selectedClassId]);
 
-  // 시험지를 바꿨을 때 현재 선택된 학생이 해당 반 소속이 아니면 첫 번째 학생으로 자동 변경
+  // 시험지나 반을 바꿨을 때 현재 선택된 학생이 해당 반 소속이 아니면 첫 번째 학생으로 자동 변경
   useEffect(() => {
     if (filteredStudents.length > 0) {
       const exists = filteredStudents.some((st) => st.id === selectedStudentId);
@@ -551,17 +578,21 @@ const questionTotalScore = totalScore;
     }
   };
 
-  // 통계 계산
+  // 통계 계산 (선택된 반 수강생 기준)
   const stats = useMemo(() => {
-    if (results.length === 0) return { avg: 0, max: 0, min: 0 };
-    const scores = results.map((r) => Number(r.score));
+    const allowedIds = new Set(filteredStudents.map((st) => st.id));
+    const classResults = results.filter(
+      (r) => allowedIds.has(r.student_id) && r.score !== null && r.score !== undefined
+    );
+    if (classResults.length === 0) return { avg: 0, max: 0, min: 0 };
+    const scores = classResults.map((r) => Number(r.score));
     const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
     return {
       avg: Math.round(avg * 10) / 10,
       max: Math.max(...scores),
       min: Math.min(...scores),
     };
-  }, [results]);
+  }, [results, filteredStudents]);
 
   return (
     <div>
@@ -626,13 +657,45 @@ const questionTotalScore = totalScore;
         )}
       </div>
 
+     {/* 연결 클래스 선택 */}
+      {selectedExam && (
+        <div className="bg-[#161922] border border-gray-800 rounded-xl p-3.5 mb-4 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium text-gray-400 mr-1">연결 클래스:</span>
+          {linkedClasses.length > 0 ? (
+            linkedClasses.map((cls) => {
+              const count = classStudents.filter((cs) => cs.class_id === cls.id).length;
+              const active = selectedClassId === cls.id;
+              return (
+                <button
+                  key={cls.id}
+                  type="button"
+                  onClick={() => setSelectedClassId(cls.id)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                    active
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'bg-[#0f1117] text-gray-300 border border-gray-700 hover:border-gray-500'
+                  }`}
+                >
+                  {cls.name} ({count}명)
+                </button>
+              );
+            })
+          ) : (
+            <span className="text-xs text-amber-400">
+              연결된 클래스가 없습니다 (클래스 관리 → 수업 회차에서 시험지를 연동해 주세요)
+            </span>
+          )}
+        </div>
+      )}
+
       {/* 요약 통계 카드 */}
       {selectedExam && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
           <div className="bg-[#161922] border border-gray-800 rounded-xl p-4">
             <div className="text-xs text-gray-400 mb-1">채점 완료</div>
             <div className="text-xl font-bold text-white">
-              {results.length} <span className="text-sm font-normal text-gray-400">/ {filteredStudents.length}명</span>
+              {results.filter((r) => filteredStudents.some((st) => st.id === r.student_id)).length}{' '}
+              <span className="text-sm font-normal text-gray-400">/ {filteredStudents.length}명</span>
             </div>
           </div>
           <div className="bg-[#161922] border border-gray-800 rounded-xl p-4">
