@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/components/AuthProvider';
+import * as XLSX from 'xlsx';
 import {
   Plus,
   Trash2,
@@ -16,6 +17,7 @@ import {
   UserPlus,
   X,
   Search,
+  Download,
 } from 'lucide-react';
 
 interface ClassItem {
@@ -287,6 +289,90 @@ const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editSessionTopic, setEditSessionTopic] = useState('');
   const [editSessionMemo, setEditSessionMemo] = useState('');
   const [editSessionExamId, setEditSessionExamId] = useState('');
+
+  // 회차별 문자 발송용 성적표 엑셀 다운로드
+  const handleDownloadSmsExcel = async (cls: any, session: any) => {
+    if (!session?.exam_id) {
+      return alert('이 회차에 연동된 시험지가 없습니다.');
+    }
+
+    const [resData, csData, examData] = await Promise.all([
+      supabase
+        .from('exam_results')
+        .select('student_id, score')
+        .eq('exam_id', session.exam_id),
+      supabase
+        .from('class_students')
+        .select('student_id')
+        .eq('class_id', cls.id),
+      supabase
+        .from('exams')
+        .select('title')
+        .eq('id', session.exam_id)
+        .single(),
+    ]);
+
+    const allGraded = (resData.data || []).filter(
+      (r: any) => r.score !== null && r.score !== undefined
+    );
+
+    if (allGraded.length === 0) {
+      return alert('아직 채점 저장된 학생 성적이 없습니다.');
+    }
+
+    const enrolledSet = new Set((csData.data || []).map((c: any) => c.student_id));
+    const classGraded = allGraded.filter((r: any) => enrolledSet.has(r.student_id));
+    const targetRows = classGraded.length > 0 ? classGraded : allGraded;
+
+    const totalScore = targetRows.reduce((acc: number, r: any) => acc + Number(r.score), 0);
+    const avgScore = Math.round((totalScore / targetRows.length) * 10) / 10;
+
+    const targetIds = targetRows.map((r: any) => r.student_id);
+    const { data: stuList } = await supabase
+      .from('students')
+      .select('id, name, phone, parent_phone')
+      .in('id', targetIds);
+
+    const stuMap = new Map((stuList || []).map((st: any) => [st.id, st]));
+    const examTitle = examData.data?.title || `${session.session_no}회차 시험`;
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://classnote-rosy.vercel.app';
+
+    const excelRows: any[] = [];
+
+    targetRows.forEach((r: any) => {
+      const stu = stuMap.get(r.student_id);
+      if (!stu) return;
+
+      const reportUrl = `${origin}/report/student/${stu.id}`;
+      const rawPhones = String(stu.parent_phone || stu.phone || '');
+      const splitPhones = rawPhones
+        .split(/[,/\n;]+/)
+        .map((p) => p.replace(/\([^)]*\)/g, '').replace(/[^0-9-]/g, '').trim())
+        .filter((p) => p.replace(/-/g, '').length >= 9);
+
+      const phonesToUse = splitPhones.length > 0 ? splitPhones : [''];
+
+      phonesToUse.forEach((phoneNum) => {
+        excelRows.push({
+          학생명: stu.name,
+          수신번호: phoneNum,
+          시험명: examTitle,
+          점수: r.score,
+          반평균: avgScore,
+          성적표링크: reportUrl,
+        });
+      });
+    });
+
+    excelRows.sort((a, b) => a.학생명.localeCompare(b.학생명, 'ko'));
+
+    const worksheet = XLSX.utils.json_to_sheet(excelRows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, '문자발송');
+
+    const safeClassName = String(cls.name || '클래스').replace(/[\\/:*?"<>|]/g, '_');
+    XLSX.writeFile(workbook, `${safeClassName}_${session.session_no}회차_문자발송용.xlsx`);
+  };
 
   const startEditSession = (s: any) => {
     setEditingSessionId(s.id);
@@ -797,6 +883,17 @@ const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
                             })()}
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
+                            {s.exam_id && (
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadSmsExcel(cls, s)}
+                      className="text-xs bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/30 border border-emerald-500/30 px-2.5 py-1 rounded-md flex items-center gap-1 mr-1 transition"
+                      title="채점 완료된 수강생의 문자 발송용 엑셀 다운로드"
+                    >
+                      <Download size={12} />
+                      문자용 엑셀
+                    </button>
+                  )}
                             <button
                               type="button"
                               onClick={() => startEditSession(s)}
