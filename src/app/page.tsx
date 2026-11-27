@@ -328,10 +328,14 @@ const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
     const avgScore = Math.round((totalScore / targetRows.length) * 10) / 10;
 
     const targetIds = targetRows.map((r: any) => r.student_id);
-    const { data: stuList } = await supabase
+    const { data: stuList, error: stuError } = await supabase
       .from('students')
-      .select('id, name, phone, parent_phone')
+      .select('*')
       .in('id', targetIds);
+
+    if (stuError) {
+      return alert('학생 정보 조회 실패: ' + stuError.message);
+    }
 
     const stuMap = new Map((stuList || []).map((st: any) => [st.id, st]));
     const examTitle = examData.data?.title || `${session.session_no}회차 시험`;
