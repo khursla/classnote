@@ -11,6 +11,8 @@ import {
   ShieldCheck,
   Award,
   LogOut,
+  PlayCircle,
+  ExternalLink,
 } from 'lucide-react';
 
 export default function Sidebar() {
@@ -62,6 +64,20 @@ export default function Sidebar() {
               </Link>
             );
           })}
+          {role !== 'student' && (
+            <a
+              href="https://fineman.netlify.app/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium text-gray-400 hover:text-white hover:bg-gray-800/50 transition"
+            >
+              <span className="flex items-center gap-3">
+                <PlayCircle size={17} />
+                에듀트랙 (강의 진도)
+              </span>
+              <ExternalLink size={13} className="opacity-60" />
+            </a>
+          )}
         </nav>
       </div>
 
